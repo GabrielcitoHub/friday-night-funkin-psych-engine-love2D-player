@@ -13,9 +13,11 @@ local function trim(s) return (s:gsub("^%s+","") :gsub("%s+$","")) end
 -- Parse attributes from a tag's inside string, e.g. ' id="1" note="up"'
 local function parse_attributes(s)
   local attrs = {}
+  ---@diagnostic disable-next-line
   for k, v in s:gmatch('%s*([%w:_-]+)%s*=\s*"([^"]*)"') do
     attrs[k] = v
   end
+  ---@diagnostic disable-next-line
   for k, v in s:gmatch("%s*([%w:_-]+)%s*=\s*'([^']*)'") do
     attrs[k] = v
   end
