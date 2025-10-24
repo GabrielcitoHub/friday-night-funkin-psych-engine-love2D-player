@@ -70,6 +70,9 @@ function self:keypressed(key)
     if key == "space" or key == "return" then
         self:checkSelected()
     end
+    if key == "t" then
+        Utils:fancyChange("test")
+    end
 end
 
 return self
