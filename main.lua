@@ -8,7 +8,8 @@ soundManager:setFolder("music","assets/shared/music")
 FPS = require("libs/FPS")
 Timer = require("libs/timer")
 Utils = require("libs/utils")
-local settings = {}
+CharactersLib = require("libs/characters")
+_G.settings = {}
 
 function _G.loadSettings(cfg)
     for _,opt in ipairs(cfg) do
@@ -42,9 +43,11 @@ function love.load()
 end
 
 function love.update(dt)
+    sprm:update(dt)
     Timer.update(dt)
     stateManager:update(dt)
     Utils:updateTweens(dt)
+    CharactersLib:update(dt)
 end
 
 function love.keypressed(key)
