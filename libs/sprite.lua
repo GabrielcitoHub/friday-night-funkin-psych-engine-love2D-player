@@ -32,7 +32,7 @@ end
 function spritemanager:tagToSprite(tag)
     local spr = self.sprites[tag]
     if not spr then 
-        error("Sprite with tag \"" .. tag .. "\" not found")
+        print("Sprite with tag \"" .. tag .. "\" not found")
     end
     return spr
 end
@@ -221,77 +221,198 @@ end
 ---@param tag string A sprite tag
 ---@param animname string The name of the animation to load
 ---@param animtype ANIMATION_TYPES
----@param extra table|nil Extra animation parameters
-function spritemanager:addLuaAnimation(tag, animname, animtype, extra)
-    animtype = string.lower(animtype) or self.animExt or "xml"
+---@param extra table|nil Extra animation parameters (depending on type)
+function spritemanager:addLuaAnimation(tag, animTag, animname, animtype, extra)
     local spr = self:tagToSprite(tag)
+    if not spr then return end
+
+    animtype = (animtype and string.lower(animtype)) or self.animExt or "xml"
+    spr.anims = spr.anims or {}
+
+    ----------------------------------------------------------
+    -- 1️⃣ XML Animation Parsing (Texture Atlas format)
+    ----------------------------------------------------------
     if animtype == "xml" then
+        local xmlPath = spr.path:gsub("%.[^%.]+$", "") .. ".xml"
+        print("XML Path: " .. xmlPath)
+        if not love.filesystem.getInfo(xmlPath) then
+            print("[WARN] Missing XML animation file: " .. xmlPath)
+            return
+        end
+
+        spr.cache = spr.cache or {}
+        spr.cache.xml = spr.cache.xml or {}
+        local xmlData = spr.cache.xml.data or love.filesystem.read(xmlPath)
+        local anim = Utils:parseXMLAnimation(xmlData, animname) -- You can make this loader
+        if not anim then return end
+
+        spr.anims[animTag] = {
+            type = "xml",
+            frames = anim.frames,
+            image = anim.image,
+            interval = anim.interval or (1/24)
+        }
+        spr.cache.xml.data = xmlData
+
+    ----------------------------------------------------------
+    -- 2️⃣ Psych Engine / LibreSprite JSON format
+    ----------------------------------------------------------
     elseif animtype == "librejson" then
         local folder = spr.path:match("^(.*)/") .. "/"
-        local animpath = folder .. animname .. "-sheet.png"
-        local animImage = self:findImage(animpath)
-        local json_decoded = json.decode(love.filesystem.read(string.gsub(spr.path, "%.[^%.]+$", "") .. ".json"))
-        local newframes = {}
-        if not json_decoded then return end
-        for key,frame in pairs(json_decoded.frames) do
-            local str = key
-            -- Capture everything up to the last space, then capture number + extension
-            local name, num, ext = str:match("^(.*)%s+(%d+)%.([^.]+)$")
+        local imgPath = folder .. animname .. "-sheet.png"
+        local img = self:findImage(imgPath)
+        if not img then
+            print("[WARN] Missing JSON sheet image: " .. imgPath)
+            return
+        end
+
+        local jsonPath = spr.path:gsub("%.[^%.]+$", "") .. ".json"
+        local decoded = json.decode(love.filesystem.read(jsonPath))
+        if not decoded then return end
+
+        local frames = {}
+
+        for key, frame in pairs(decoded.frames) do
+            -- Match: animname 0000.png / animname 1.png / animname123.png, etc
+            local name, num = key:match("^(.-)%s*(%d+)%.png$")
             if name == animname then
-                local framedata = {
+                table.insert(frames, {
                     frame = frame,
-                    num = tonumber(num),
-                    image = animImage
-                }
-                table.insert(newframes, framedata)
+                    num = tonumber(num)
+                })
             end
-
-            -- print("Name: ", name)
-            -- print("Num: ", num)
-            -- print("Ext: ", ext)
-        end
-        table.sort(newframes, function(a, b)
-            return a.num < b.num
-        end)
-        for i,v in ipairs(newframes) do
-            newframes[i] = v.frame
         end
 
-        local animdata = {
+        table.sort(frames, function(a,b) return a.num < b.num end)
+
+        local ordered = {}
+        for i,v in ipairs(frames) do
+            ordered[i] = v.frame
+        end
+
+        spr.anims[animTag] = {
             type = "json",
-            image = animImage,
-            frames = newframes
+            frames = ordered,
+            image = img,
+            interval = extra and extra.interval or 1/24
         }
 
-        spr.anims[animname] = animdata
+    ----------------------------------------------------------
+    -- 3️⃣ Texture Packer JSON (formats that include atlas definition)
+    ----------------------------------------------------------
     elseif animtype == "json" then
-    elseif animtype == "quad" or animtype == "quads" then
-        if not extra then return end
-        local quads = extra.quads or extra
-        local interval = extra.interval or extra.duration or extra.time
-        local animdata = {
-            type = "quad",
-            quads = quads,
-            interval = interval
+        local jsonPath = spr.path:gsub("%.[^%.]+$", "") .. ".json"
+        local decoded = json.decode(love.filesystem.read(jsonPath))
+        if not decoded or not decoded.animations or not decoded.animations[animname] then
+            print("[WARN] Missing JSON animation section for: " .. animname)
+            return
+        end
+
+        spr.anims[animTag] = {
+            type = "json_atlas",
+            frames = decoded.animations[animname],
+            image = spr.image,
+            interval = extra and extra.interval or 1/24
         }
-        self.anims[animname] = animdata
+
+    ----------------------------------------------------------
+    -- 4️⃣ Quad Sheet Animations (manual)
+    ----------------------------------------------------------
+    elseif animtype == "quad" or animtype == "quads" then
+        if not extra then
+            print("[ERROR] Missing quad data for manual animation")
+            return
+        end
+
+        spr.anims[animTag] = {
+            type = "quad",
+            quads = extra.quads or extra,
+            interval = extra.interval or extra.duration or extra.time or 0.05,
+            image = spr.image
+        }
+    ----------------------------------------------------------
+    else
+        print("[ERROR] Unknown animation type: " .. tostring(animtype))
     end
 end
 
 -- Removes a lua sprite from rendering
 -- First parameter must be the object tag
 function spritemanager:removeLuaSprite(tag)
-    local spr = self:tagToSprite(tag)
-    spr = nil
+    self.sprites[tag] = nil
     -- Uhh i don't think that sprite exists bro... im sorry
     -- i still think that sprites doesn't exist
 end
 
-function spritemanager:update()
-    -- for tag,spr in pairs(self.sprites) do
-    --     if spr.onCollide then
-    --     end
-    -- end
+function spritemanager:_applyFrameToSprite(spr, anim)
+    local frameIndex = spr.frameIndex or 1
+    local frame = anim.frames[frameIndex]
+    if not frame then return end
+
+    -- Animation types:
+    if anim.type == "quad" then
+        spr.quad = anim.quads[frameIndex]
+
+    elseif anim.type == "json" or anim.type == "json_atlas" then
+        spr.quad = love.graphics.newQuad(
+            frame.frame.x, frame.frame.y,
+            frame.frame.w, frame.frame.h,
+            anim.image:getDimensions()
+        )
+
+    elseif anim.type == "xml" then
+        if not anim.image then
+            anim.image = spr.image
+        end
+
+        spr.quad = love.graphics.newQuad(
+            frame.x, frame.y,
+            frame.width, frame.height,
+            anim.image:getWidth(), anim.image:getHeight()
+        )
+    end
+end
+
+function spritemanager:playAnim(tag, anim)
+    local spr = self:tagToSprite(tag)
+    if not spr then return end
+
+    spr.currentAnim = anim
+    spr.frameIndex = 1
+    spr.frameTime = 0
+    self:_applyFrameToSprite(spr, spr.anims[anim])
+end
+
+function spritemanager:stopAnim(tag)
+    local spr = self:tagToSprite(tag)
+    if not spr then return end
+
+    spr.currentAnim = nil
+end
+
+function spritemanager:update(dt)
+    for tag, spr in pairs(self.sprites) do
+        if spr.currentAnim then
+            local anim = spr.anims and spr.anims[spr.currentAnim]
+            if anim then
+                spr.frameTime = spr.frameTime + dt
+
+                local interval = anim.interval or (1/24)
+                if spr.frameTime >= interval then
+                    spr.frameTime = spr.frameTime - interval
+                    spr.frameIndex = spr.frameIndex + 1
+
+                    -- loop animation
+                    if spr.frameIndex > #anim.frames then
+                        spr.frameIndex = 1
+                    end
+
+                    -- update actual sprite visual
+                    self:_applyFrameToSprite(spr, anim)
+                end
+            end
+        end
+    end
 end
 
 -- Gets a property from a sprite object
@@ -357,6 +478,14 @@ function spritemanager:centerObject(tag, centertype)
     --spritemanager:updateSprite(spr.tag, spr)
 end
 
+function spritemanager:_draw(spr)
+    if spr.quad then
+        love.graphics.draw(spr.image,spr.quad,spr.x,spr.y,spr.r,spr.sx,spr.sy,spr.ox,spr.oy,spr.kx,spr.ky)
+    else
+        love.graphics.draw(spr.image,spr.x,spr.y,spr.r,spr.sx,spr.sy,spr.ox,spr.oy,spr.kx,spr.ky)
+    end
+end
+
 function spritemanager:drawSprite(tag)
     local cam = self.camera
 
@@ -373,10 +502,10 @@ function spritemanager:drawSprite(tag)
     end
     if spr.visible and spr.enabled then
         if layer == "game" or not self.camera then
-            love.graphics.draw(spr.image,spr.x,spr.y,spr.r,spr.sx,spr.sy,spr.ox,spr.oy,spr.kx,spr.ky)
+            self:_draw(spr)
         elseif cam and (layer == "hud" or layer == "gui" or layer == "ui") then
             cam:detach()
-                love.graphics.draw(spr.image,spr.x,spr.y,spr.r,spr.sx,spr.sy,spr.ox,spr.oy,spr.kx,spr.ky)
+                self:_draw(spr)
             cam:attach()
         end
     end
@@ -431,6 +560,14 @@ function spritemanager:setObjectOrder(tag, order)
     local spr = self:tagToSprite(tag)
     order = order or 1
     spr.order = order
+end
+
+-- Sets the draw order of an object
+-- First parameter must be the object tag
+function spritemanager:setObjectVisible(tag, visible)
+    visible = visible or true
+    local spr = self:tagToSprite(tag)
+    spr.visible = visible
 end
 
 -- Clears all of the sprites from drawing
