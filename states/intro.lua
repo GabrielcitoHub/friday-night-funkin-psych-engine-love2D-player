@@ -1,6 +1,6 @@
 local state = {}
 local self = state
-self.goToState = "menu"
+self.goToState = "freeplay"
 self.debug = true
 
 local function continue()
