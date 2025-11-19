@@ -12,14 +12,17 @@ function self:getPath(desiredPath)
     return self.paths[desiredPath]
 end
 
-function self:fancyChange(time, state, extra)
+function self:fancyChange(time, state, extra, extra2)
     if not self.active then return end
+    extra2 = extra2 or {}
     if not state then
         state = time
         time = 1
     end
     time = time or 1
-    soundManager:playSound("confirmMenu",nil,{new = true})
+    if not extra2.nosound then
+        soundManager:playSound("confirmMenu",nil,{new = true})
+    end
     self.active = false
     Timer.after(time, function()
         self.active = true
@@ -42,14 +45,22 @@ function self:loadJson(path)
             if success and decoded then
                 jsonData = decoded
             else
-                print("Error: Failed to decode JSON in " .. path)
+                print("Error: Failed to decode JSON in \"" .. path .. "\"")
             end
         else
-            print("Error: Could not read file " .. path)
+            print("Error: Could not read file \"" .. path .. "\"")
         end
     end
 
     return jsonData
+end
+
+function self:loadDefaultMod(mod)
+    self.defaultMod = mod
+end
+
+function self:getCurrentMod()
+    return self.defaultMod
 end
 
 function self:buildQuads(atlas, texture)
@@ -63,8 +74,17 @@ function self:buildQuads(atlas, texture)
     return quads
 end
 
-function self:parseXMLAnimation(data, animName)
-    local atlas = self:parseTextureAtlas(data)
+function self:parseXMLAnimation(data, animName, extra)
+    extra = extra or {}
+    self.cache = self.cache or {}
+    self.cache.atlases = self.cache.atlases or {}
+    local atlas = self.cache.atlases[animName]
+    if extra.new or not atlas then
+        atlas = self:parseTextureAtlas(data)
+    end
+    if not self.cache.atlases[animName] then
+        -- self.cache.atlases[animName] = atlas
+    end
     local frames = {}
 
     -- Look for frames starting with animName
@@ -79,7 +99,7 @@ function self:parseXMLAnimation(data, animName)
     end
 
     if #frames == 0 then
-        print("❌ No frames found for animation:", animName)
+        print("[ERROR] No frames found for animation: \"" .. animName .. "\"")
         return nil
     end
 
@@ -93,7 +113,7 @@ function self:parseXMLAnimation(data, animName)
         frames[i] = f.quadData
     end
 
-    print("✅ XML Animation parsed:", animName, "Frames:", #frames)
+    print("XML Animation parsed: \"" .. animName .. "\" Frames: \"" ..  #frames .. "\"")
 
     return {
         type = "xml",
@@ -200,11 +220,30 @@ function self:loadModsOrder()
         for line in love.filesystem.lines("modsList.txt") do
             local name, active = line:match("([^|]+)|([01])")
             if name then
-                table.insert(order, { name = name, active = active == "1" })
+                table.insert(order, { name = name, active = active == "1" or false })
             end
         end
     end
     return order
+end
+
+function self:encodeSongs(newSongsTable, songs, mod, extra)
+    newSongsTable = newSongsTable or {}
+    extra = extra or {}
+    if extra.new then
+        newSongsTable = {}
+    end
+    for _, song in pairs(songs) do
+        song.path = {
+            songs = Utils:getPath("mods") .. mod.modName .. "/songs/" .. song[1],
+            data = Utils:getPath("mods") .. mod.modName .. "/data/" .. song[1]
+        }
+        song.mod = mod
+        song.name = song[1]
+        song.difficulties = extra.difficulties or {"Hard"}
+
+        table.insert(newSongsTable, song)
+    end
 end
 
 function self:loadMod(path)
@@ -253,8 +292,8 @@ function self:loadMods(modState)
         local mod
         if modState then
             print(modName)
-            print(orderLookup[modName].active)
-            if orderLookup[modName].active == modState then
+            if orderLookup[modName] and orderLookup[modName].active == modState then
+                print(orderLookup[modName].active)
                 mod = self:loadMod(modPath)
             end
         else
@@ -293,9 +332,38 @@ function self:getSetting(name)
     end
 end
 
-function self:loadSong(path)
+function self:loadSong(song)
+    Utils:loadDefaultMod(song.mod)
     soundManager:stopAllMusics()
-    Utils:fancyChange(1, "gameplay", path)
+    Utils:fancyChange(1, "gameplay", song)
+end
+
+function self:loadWeek(week)
+    Utils:loadDefaultMod(week.mod)
+    week.curSong = 1
+    local loadSong = week.loadedSongs[week.curSong]
+    if loadSong then
+        soundManager:stopAllMusics()
+        Utils:fancyChange(1, "gameplay", loadSong)
+    else
+        print("This week has no songs")
+        Utils:fancyChange(1, "menu")
+    end
+    
+end
+
+function self:loadNextWeekSong(song)
+    assert(song.week, "This song has no week")
+    local week = song.week
+    local nextSong = week.songs[week.curSong + 1]
+    
+    if nextSong then
+        soundManager:stopAllMusics()
+        Utils:fancyChange(1, "gameplay", nextSong, {nosound = true})
+        week.curSong = week.curSong + 1
+    else
+        Utils:fancyChange(1, "story_mode", nil, {nosound = true})
+    end
 end
 
 return self
