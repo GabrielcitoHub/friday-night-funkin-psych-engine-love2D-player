@@ -87,6 +87,7 @@ function self:load()
         { name = "Show FPS", value = false },
         { name = "Vsync", value = 1.0 },
         { name = "Keybinds", action = function() print("Open keybinds menu") end },
+        { name = "lowQuality", value = false },
         { name = "Back", action = function() Utils:goBack("menu") end },
     }
 
