@@ -37,6 +37,20 @@ function spritemanager:tagToSprite(tag)
     return spr
 end
 
+function spritemanager:addLuaSprite(tag, front)
+    if not front then
+        spritemanager:setObjectOrder(tag,-100 + #spritemanager.sprites)
+    else
+        local hightestOrder = 0
+        for _,sprite in pairs(spritemanager.sprites) do
+            if sprite.order > hightestOrder then
+                hightestOrder = sprite.order
+            end
+        end
+        spritemanager:setObjectOrder(tag,hightestOrder + 1)
+    end
+end
+
 -- Loads a frame to use with :playFrame()
 -- First parameter must be the object tag
 -- Second parameter must be the frame name you want to load
@@ -345,7 +359,12 @@ function spritemanager:removeLuaSprite(tag)
 end
 
 function spritemanager:_applyFrameToSprite(spr, anim)
-    local frameIndex = spr.frameIndex or 1
+    local frameIndex = spr.frameIndex
+    if not anim then
+        print("Animation for sprite \"" .. spr.tag .. "\" not found")
+        return
+    end
+
     local frame = anim.frames[frameIndex]
     if not frame then return end
 
@@ -365,9 +384,10 @@ function spritemanager:_applyFrameToSprite(spr, anim)
             anim.image = spr.image
         end
 
+        local x,y,w,h = frame.x,frame.y,frame.width,frame.height or frame.frameHeight or anim.image:getHeight()
         spr.quad = love.graphics.newQuad(
-            frame.x, frame.y,
-            frame.width, frame.height,
+            x, y,
+            w, h,
             anim.image:getWidth(), anim.image:getHeight()
         )
     end
@@ -548,6 +568,7 @@ end
 -- First parameter must be the object tag
 function spritemanager:setObjectSize(tag, width, height)
     local spr = self:tagToSprite(tag)
+    if not spr then return end
     width = width or spr.sx
     height = height or spr.sy
     spr.sx = width
