@@ -10,6 +10,7 @@ self.strumLineY = love.graphics.getHeight() - 150
 self.arrowKeys = {"left", "down", "up", "right", "left", "down", "up", "right"}
 self.preloadTime = 1 -- seconds ahead of time to spawn notes
 self.notePool = {} -- free sprites to reuse
+self.songended = false
 
 function self:clickSound()
     if not settings["Click Sound"] then return end
@@ -18,7 +19,9 @@ end
 
 function self:exit()
     self.song.inst:stop()
-    self.song.voices:stop()
+    if self.song.voices then
+        self.song.voices:stop()
+    end
     Utils:goBack("menu")
 end
 
@@ -46,26 +49,98 @@ function self:defineConstants()
     end
 end
 
+function self:tryFixFilename(path)
+    -- Separate directory and filename
+    local dir, filename = path:match("^(.-)([^/]+)$")
+
+    if not dir or not filename then
+        return path -- fallback safety
+    end
+
+    -- Try original filename first
+    if love.filesystem.getInfo(path) then
+        return path
+    end
+
+    -- Replace spaces ONLY in filename
+    local fixedName = filename:gsub(" ", "-")
+    local altPath = dir .. fixedName
+
+    if love.filesystem.getInfo(altPath) then
+        return altPath, fixedName
+    end
+
+    altPath = dir .. string.lower(fixedName)
+
+    if love.filesystem.getInfo(altPath) then
+        return altPath, fixedName
+    end
+
+    return path -- if still not found, keep original
+end
+
 -- 🔹 LOAD FUNCTION
 function self:load(song)
+    self.song = song
     self.paths = song.path
     self.mod = song.mod
+    self.difficulty = string.lower(song.difficulty)
+    if self.difficulty == "normal" then
+        self.difficulty = ""
+    end
     print(self.mod.modName)
 
     self.songPath = self.paths.songs
     self.dataPath = self.paths.data
 
-    -- Audio
-    self.song.inst = love.audio.newSource(self.songPath .. "/inst.ogg", "static")
-    self.song.voices = love.audio.newSource(self.songPath .. "/voices.ogg", "static")
-
     -- Chart
-    self.song.chart = Utils:loadJson(self.dataPath .. "/" .. song.name .. "-hard.json")
+    local chartPath = self.dataPath
+    local newSongName
+    if not love.filesystem.getInfo(chartPath) then
+        local oldPath = chartPath
+        chartPath, newSongName = self:tryFixFilename(chartPath)
+        if chartPath == oldPath then
+            print("Chart not found... " .. chartPath)
+            Utils:goBack("menu")
+        end
+    end
+    if newSongName then song.name = newSongName end
+
+    print(chartPath)
+    
+    local chartLoadPath = chartPath .. "/" .. song.name .. "-" .. self.difficulty .. ".json"
+    if self.difficulty == "" then
+        chartLoadPath = chartPath .. "/" .. song.name .. ".json"
+    end
+    if not love.filesystem.getInfo(chartLoadPath) then
+        chartLoadPath = chartPath .. "/" .. song.name .. ".json"
+    end
+    print("PATH2: " .. chartLoadPath)
+    
+    self.song.chart = Utils:loadJson(chartLoadPath)
+    self.song.stage = self.song.chart.stage or self.song.chart.song.stage
+    self.song.stage = StagesLib:loadStage(self.song.stage, song.mod)
+
+    -- Audio
+    local instPath = self.songPath
+    if not love.filesystem.getInfo(instPath) then
+        instPath = self:tryFixFilename(instPath)
+        -- try again but replacing spaces in the filename with "-"
+    end
+
+    print(instPath)
+    self.song.inst = love.audio.newSource(instPath .. "/inst.ogg", "static")
+    local voicesPath = self.songPath .. "/voices.ogg"
+    if love.filesystem.getInfo(voicesPath) then
+        self.song.voices = love.audio.newSource(voicesPath, "static")
+    end
 
     print("BPM:", self.song.chart.bpm)
 
     self.song.inst:play()
-    self.song.voices:play()
+    if self.song.voices then
+        self.song.voices:play()
+    end
 
     self:defineConstants()
 
@@ -91,6 +166,7 @@ function self:getNoteSprite(note)
     local img = Utils:getPath("images") .. "arrows/" .. dir .. ".png"
 
     sprm:makeLuaSprite(tag, img, 0, 0)
+    sprm:setObjectOrder(tag, 3)
     sprm:setObjectSize(tag, 2, 2)
 
     return tag
@@ -106,6 +182,7 @@ function self:spawnNoteSprite(note)
 end
 
 function self:releaseNoteSprite(note)
+    self.lastNote = note
     note.active = false
     note.hit = true
     if note.sprite then
@@ -119,7 +196,9 @@ function self:getDir(lane)
 end
 
 function self:hitArrow(arrow, note)
-    self.song.voices:setVolume(1)
+    if self.song.voices then
+        self.song.voices:setVolume(1)
+    end
     self:releaseNoteSprite(note)
     if arrow then
         sprm:playFrame(arrow,self.arrowKeys[note.lane + 1])
@@ -135,12 +214,16 @@ function self:noteMiss(note)
     if note.lane < 4 then
         local dir = self:getDir(note.lane)
         CharactersLib:playBFAnimation(dir, true)
-        self.song.voices:setVolume(0)
+        if self.song.voices then
+            self.song.voices:setVolume(0)
+        end
     end
 end
 
 function self:miss()
-    self.song.voices:setVolume(0)
+    if self.song.voices then
+        self.song.voices:setVolume(0)
+    end
 end
 
 -- 🔹 UPDATE FUNCTION
@@ -187,6 +270,10 @@ function self:update(dt)
             end
         end
     end
+
+    if not self.song.inst:isPlaying()then
+        self:onEndsong()
+    end
 end
 
 -- 🔹 DRAW FUNCTION
@@ -214,7 +301,7 @@ end
 function self:makeArrow(tag, path, list, extra)
     extra = extra or {}
     sprm:makeLuaSprite(tag, path, extra.baseX + (extra.i - 1) * extra.spacing, extra.baseY)
-    sprm:setObjectOrder(tag,2)
+    sprm:setObjectOrder(tag,4)
     sprm:setObjectSize(tag, 2, 2)
     sprm:moveObject(tag, 0, -sprm:getProperty(tag, "image"):getHeight()/2)
 
@@ -297,6 +384,17 @@ function self:getOpponentArrow(key)
     return self.noteOpponentArrows[key]
 end
 
+function self:onEndsong()
+    if self.songEnded then return end
+    self.songEnded = true
+    
+    if self.song.week then
+        Utils:loadNextWeekSong(self.song)
+    else
+        Utils:fancyChange(1,"freeplay",nil,{nosound = true})
+    end
+end
+
 -- 🔹 INPUT HANDLING
 function self:keypressed(key)
     local keyMap = {left = 0, down = 1, up = 2, right = 3}
@@ -319,6 +417,8 @@ function self:keypressed(key)
         end
     elseif key == "escape" then
         self:exit()
+    elseif key == "e" then
+        self:onEndsong()
     end
 end
 
