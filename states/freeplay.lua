@@ -11,26 +11,17 @@ self.songs = {
 self.songs = {}
 
 self.selectedIndex = 1
+self.selectedDifficulty = 1
 self.font = nil
 
 function self:loadSongs()
     local loadedSongs = {}
-
-    for index, mod in ipairs(self.mods) do
+    for _, mod in ipairs(self.mods) do
         print(mod.name)
         print(mod.active)
         for _, week in pairs(mod.weeks) do
             if week.songs then
-                for _, song in pairs(week.songs) do
-                    print("ModName: " .. mod.modName)
-                    song.path = {
-                        songs = Utils:getPath("mods") .. mod.modName .. "/songs/" .. song[1],
-                        data = Utils:getPath("mods") .. mod.modName .. "/data/" .. song[1]
-                    }
-                    song.mod = mod
-                    song.name = song[1]
-                    table.insert(loadedSongs, song)
-                end
+                Utils:encodeSongs(loadedSongs, week.songs, mod, {difficulties = week.difficulties})
             end
         end
     end
@@ -57,6 +48,7 @@ function self:load()
                     name = song[1],
                     icon = song[2],
                     color = song[3],
+                    difficulties = song.difficulties,
                     path = song.path,
                     mod = song.mod
                 }
@@ -99,14 +91,24 @@ function self:draw()
     if #self.songs > 0 then
         for i, song in ipairs(self.songs) do
             local y = 100 + (i - 1) * 40
+
+            song.name = song.name or "???"
+            song.difficulties = song.difficulties or {"Hard", "Normal", "Easy"}
+            if type(song.difficulties) == "string" then
+                song.difficulties = {song.difficulties}
+            end
+            song.difficulty = song.difficulties[self.selectedDifficulty] or song.difficulties[1] -- or "N/A"
+
             if i == self.selectedIndex then
                 love.graphics.setColor(0.8, 1, 1) -- yellow for selected
+                if self.selectedDifficulty > #song.difficulties then
+                    self.selectedDifficulty = 1
+                elseif self.selectedDifficulty < 1 then
+                    self.selectedDifficulty = #song.difficulties
+                end
             else
                 love.graphics.setColor(1, 1, 1)
             end
-
-            song.name = song.name or "???"
-            song.difficulty = song.difficulty or "N/A"
 
             love.graphics.printf(song.name .. " [" .. song.difficulty .. "]", 0, y, love.graphics.getWidth(), "center")
         end
@@ -131,12 +133,18 @@ function self:keypressed(key)
             self.selectedIndex = 1
         end
 
+    elseif key == "left" then
+        self.selectedDifficulty = self.selectedDifficulty - 1
+
+    elseif key == "right" then
+        self.selectedDifficulty = self.selectedDifficulty + 1
+
     elseif key == "return" or key == "space" then
         local selected = self.songs[self.selectedIndex]
         if selected then
             print("Loading song:", selected.name, "from", selected.name)
             assert(selected.mod)
-            Utils:loadSong({path = selected.path, mod = selected.mod, name = selected.name})
+            Utils:loadSong({path = selected.path, mod = selected.mod, name = selected.name, difficulty = selected.difficulty})
         else
             print("No songs to load")
         end
